@@ -111,6 +111,12 @@
         margin: 0;
       }
 
+      .server-label {
+        margin-top: 0.2rem;
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+
       .chat-shell {
         display: grid;
         grid-template-columns: 290px 1fr;
@@ -250,8 +256,7 @@
           <p class="hint">Login with an existing user and choose your endpoints.</p>
           <form id="login_form" class="login-form">
             <input id="login_user_id" placeholder="User ID (user_a..user_e)" value="user_a" />
-            <input id="chat_service_base" placeholder="Web Client API URL (login/users)" value="http://127.0.0.1:5000" />
-            <input id="ws_base" placeholder="WebSocket URL" value="ws://127.0.0.1:8080/ws" />
+            <input id="chat_service_base" placeholder="Load Balancer URL" value="http://127.0.0.1:5000" />
             <button id="login_btn" type="submit">Log In</button>
             <div class="status" id="login_status"></div>
           </form>
@@ -263,6 +268,7 @@
           <div>
             <h2 id="welcome_title">Chat App</h2>
             <div class="status" id="status">Disconnected</div>
+            <div class="server-label" id="server_label">Server: n/a</div>
           </div>
           <button id="logout_btn" class="send-small">Logout</button>
         </div>
@@ -317,6 +323,7 @@
       const chatTitleEl = document.getElementById("chat_title");
       const chatSubtitleEl = document.getElementById("chat_subtitle");
       const welcomeTitleEl = document.getElementById("welcome_title");
+      const serverLabelEl = document.getElementById("server_label");
       const msgTpl = document.getElementById("message_tpl");
       const contentEl = document.getElementById("content");
 
@@ -324,6 +331,7 @@
       let currentUser = "";
       let selectedUser = "";
       let apiBase = window.location.origin;
+      let assignedWsEndpoint = "";
       let usersPollTimer = null;
       const conversations = new Map();
 
@@ -384,6 +392,14 @@
 
       async function fetchHistory(userId) {
         return await apiRequest(`/api/history?user_id=${encodeURIComponent(userId)}`);
+      }
+
+      async function logoutAssignment(userId) {
+        return await apiRequest("/api/logout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: userId }),
+        });
       }
 
       function clearList(el) {
@@ -496,7 +512,7 @@
       }
 
       function connectWebSocket() {
-        const wsBase = document.getElementById("ws_base").value.trim();
+        const wsBase = assignedWsEndpoint;
         if (!wsBase || !currentUser) {
           return;
         }
@@ -608,9 +624,15 @@
             setLoginStatus(result.error || "Login failed");
             return;
           }
+          if (!result.service_discovery || !result.service_discovery.websocket_endpoint) {
+            setLoginStatus("No websocket endpoint assigned by load balancer");
+            return;
+          }
 
           currentUser = result.user.user_id;
+          assignedWsEndpoint = result.service_discovery.websocket_endpoint;
           welcomeTitleEl.textContent = `Chat App - ${currentUser}`;
+          serverLabelEl.textContent = `Server: ${assignedWsEndpoint}`;
           setLoginStatus("");
           showChatScreen();
 
@@ -624,6 +646,7 @@
           await refreshUsers();
           renderThread();
           connectWebSocket();
+          setStatus(`Connected via ${assignedWsEndpoint}`);
           startUsersPolling();
         } catch (_) {
           setLoginStatus("Cannot reach chat service URL");
@@ -639,14 +662,24 @@
         }
       });
 
-      logoutBtn.addEventListener("click", () => {
+      logoutBtn.addEventListener("click", async () => {
         stopUsersPolling();
         if (socket) {
           socket.close();
           socket = null;
         }
+
+        if (currentUser) {
+          try {
+            await logoutAssignment(currentUser);
+          } catch (_) {
+          }
+        }
+
         currentUser = "";
         selectedUser = "";
+        assignedWsEndpoint = "";
+        serverLabelEl.textContent = "Server: n/a";
         conversations.clear();
         setStatus("Disconnected");
         showLoginScreen();

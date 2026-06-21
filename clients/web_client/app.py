@@ -8,6 +8,7 @@ the db_service TCP protocol used by backend services.
 
 import os
 import socket
+import threading
 from datetime import datetime, timezone
 from urllib.parse import quote, unquote
 
@@ -18,6 +19,60 @@ app = Flask(__name__)
 
 DB_SERVICE_HOST = os.getenv("DB_SERVICE_HOST", "127.0.0.1")
 DB_SERVICE_PORT = int(os.getenv("DB_SERVICE_PORT", "9091"))
+
+
+class ServiceDiscoveryLoadBalancer:
+    """Simple in-memory service discovery + load balancer.
+
+    This is a lightweight stand-in for a real ZooKeeper-backed registry.
+    It performs sticky assignment per user and chooses the least-loaded
+    instance for new users.
+    """
+
+    def __init__(self, websocket_instances: list[str]) -> None:
+        if not websocket_instances:
+            raise ValueError("at least one websocket instance is required")
+        self._instances = sorted(websocket_instances)
+        self._lock = threading.Lock()
+        self._user_to_instance: dict[str, str] = {}
+        self._instance_load: dict[str, int] = {instance: 0 for instance in self._instances}
+
+    def assign(self, user_id: str) -> str:
+        """Return a sticky websocket instance for the given user."""
+        with self._lock:
+            if user_id in self._user_to_instance:
+                return self._user_to_instance[user_id]
+
+            selected = min(
+                self._instances,
+                key=lambda instance: (self._instance_load[instance], instance),
+            )
+            self._user_to_instance[user_id] = selected
+            self._instance_load[selected] += 1
+            return selected
+
+    def release(self, user_id: str) -> None:
+        """Release assignment for a user, decreasing the selected instance load."""
+        with self._lock:
+            assigned = self._user_to_instance.pop(user_id, None)
+            if not assigned:
+                return
+            current_load = self._instance_load.get(assigned, 0)
+            self._instance_load[assigned] = max(0, current_load - 1)
+
+
+def _load_websocket_instances() -> list[str]:
+    """Load discoverable websocket instances from environment configuration."""
+    configured = os.getenv("CHAT_SERVICE_WS_INSTANCES", "")
+    if configured.strip():
+        return [entry.strip() for entry in configured.split(",") if entry.strip()]
+    return [
+        "ws://127.0.0.1:8080/ws",
+        "ws://127.0.0.1:8081/ws",
+    ]
+
+
+service_discovery = ServiceDiscoveryLoadBalancer(_load_websocket_instances())
 
 
 def _read_line(sock: socket.socket) -> str:
@@ -103,9 +158,28 @@ def login() -> tuple[dict[str, object], int]:
     try:
         payload = _db_request(f"LOGIN|{quote(user_id, safe='')}")
         user = _parse_user_entry(payload)
-        return {"ok": True, "user": user}, 200
+        websocket_endpoint = service_discovery.assign(user_id)
+        return {
+            "ok": True,
+            "user": user,
+            "service_discovery": {
+                "websocket_endpoint": websocket_endpoint,
+            },
+        }, 200
     except Exception as ex:  # noqa: BLE001 - tiny prototype endpoint
         return {"ok": False, "error": str(ex)}, 400
+
+
+@app.post("/api/logout")
+def logout() -> tuple[dict[str, object], int]:
+    """Release load-balancer assignment for a user when logging out."""
+    body = request.get_json(silent=True) or {}
+    user_id = str(body.get("user_id", "")).strip()
+    if not user_id:
+        return {"ok": False, "error": "user_id is required"}, 400
+
+    service_discovery.release(user_id)
+    return {"ok": True}, 200
 
 
 @app.get("/api/users")

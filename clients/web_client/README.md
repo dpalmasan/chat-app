@@ -1,6 +1,6 @@
 # Web Client (Flask)
 
-Simple Step 1 web client UI for the chat app specification.
+Flask web UI plus a simple in-process load balancer/service discovery layer.
 
 ## Prerequisites
 
@@ -26,6 +26,19 @@ python app.py
 ```
 
 Then open http://127.0.0.1:5000
+
+## Service Discovery Configuration
+
+The Flask app acts as a simple load balancer front door and picks a WebSocket
+chat-service instance for each logged-in user.
+
+Configure discoverable chat-service instances with:
+
+```bash
+export CHAT_SERVICE_WS_INSTANCES="ws://127.0.0.1:8080/ws,ws://127.0.0.1:8081/ws"
+```
+
+If not set, it defaults to exactly the two endpoints above.
 
 ## Run E2E With Worker + C++ Services
 
@@ -74,14 +87,14 @@ python app.py
 Testing flow:
 
 1. Open two browser tabs on http://127.0.0.1:5000
-2. In tab A set endpoint to `ws://127.0.0.1:8080/ws`, set `client_id=user_a`, click `Connect`
-3. In tab B set endpoint to `ws://127.0.0.1:8081/ws`, set `client_id=user_b`, click `Connect`
-4. In tab A send to `message_to=user_b`
-5. Verify tab B receives the message JSON even though users are on different chat service instances
+2. In tab A login as `user_a`
+3. In tab B login as `user_b`
+4. The load balancer/service discovery selects WebSocket instances automatically
+5. Send message from `user_a` to `user_b` and verify cross-instance delivery
 
 ## Notes
 
-- Flask serves only the UI page.
-- The browser connects directly to the C++ WebSocket endpoint (`ws://127.0.0.1:8080/ws?client_id=<id>`).
+- Flask serves the UI and lightweight HTTP APIs (`/api/login`, `/api/users`, `/api/history`, `/api/logout`).
+- Flask currently implements a simple in-memory service discovery/load-balancing strategy (sticky user assignment + least-loaded selection for new users).
 - chat_service publishes writes to message_queue worker.
 - db_service owns message persistence/history (`message_id`, `created_at`, pending history).
