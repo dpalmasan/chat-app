@@ -29,6 +29,23 @@ ChatMessage ChatService::OnWebSocketMessage(const std::string& client_id, const 
     return HandleIncomingMessage(client_id, message);
 }
 
+std::vector<ChatMessage> ChatService::LoadPendingMessagesForClient(const std::string& client_id) {
+    const std::vector<ChatMessage> pending_messages = message_store_->LoadPendingMessagesFor(client_id);
+    Logger::Instance().Info(
+        "ChatService",
+        "Loaded pending messages for client_id=" + client_id +
+            " count=" + std::to_string(pending_messages.size()));
+    return pending_messages;
+}
+
+void ChatService::MarkMessageDelivered(const std::string& client_id, MessageId message_id) {
+    message_store_->MarkMessageDelivered(client_id, message_id);
+    Logger::Instance().Debug(
+        "ChatService",
+        "Marked delivered message_id=" + std::to_string(message_id) +
+            " client_id=" + client_id);
+}
+
 std::vector<std::string> ChatService::ConnectedClients() const {
     std::lock_guard<std::mutex> lock(clients_mutex_);
 

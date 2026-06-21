@@ -27,4 +27,37 @@ ChatMessage InMemoryMessageStore::SaveMessage(ChatMessage message) {
     return message;
 }
 
+std::vector<ChatMessage> InMemoryMessageStore::LoadPendingMessagesFor(const UserId& recipient_id) {
+    std::lock_guard<std::mutex> lock(messages_mutex_);
+
+    std::vector<ChatMessage> pending_messages;
+    const auto delivered_it = delivered_message_ids_.find(recipient_id);
+
+    for (const ChatMessage& message : messages_) {
+        if (message.message_to != recipient_id) {
+            continue;
+        }
+        if (delivered_it != delivered_message_ids_.end() &&
+            delivered_it->second.count(message.message_id) > 0) {
+            continue;
+        }
+        pending_messages.push_back(message);
+    }
+
+    Logger::Instance().Debug(
+        "InMemoryMessageStore",
+        "Loaded pending messages recipient=" + recipient_id +
+            " count=" + std::to_string(pending_messages.size()));
+    return pending_messages;
+}
+
+void InMemoryMessageStore::MarkMessageDelivered(const UserId& recipient_id, MessageId message_id) {
+    std::lock_guard<std::mutex> lock(messages_mutex_);
+    delivered_message_ids_[recipient_id].insert(message_id);
+    Logger::Instance().Debug(
+        "InMemoryMessageStore",
+        "Marked delivered recipient=" + recipient_id +
+            " message_id=" + std::to_string(message_id));
+}
+
 }  // namespace chat

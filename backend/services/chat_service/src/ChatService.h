@@ -29,6 +29,8 @@ public:
     void OnWebSocketOpen(const std::string& client_id);
     void OnWebSocketClose(const std::string& client_id);
     ChatMessage OnWebSocketMessage(const std::string& client_id, const ChatMessage& message);
+    std::vector<ChatMessage> LoadPendingMessagesForClient(const std::string& client_id);
+    void MarkMessageDelivered(const std::string& client_id, MessageId message_id);
 
     std::vector<std::string> ConnectedClients() const;
 

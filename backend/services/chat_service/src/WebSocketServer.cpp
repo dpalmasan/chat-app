@@ -397,6 +397,19 @@ void HandleClientSocket(int client_fd, ChatService& chat_service) {
     g_session_registry.Add(client_id, client_fd);
     chat_service.OnWebSocketOpen(client_id);
 
+    const std::vector<ChatMessage> pending_messages = chat_service.LoadPendingMessagesForClient(client_id);
+    for (const ChatMessage& pending_message : pending_messages) {
+        const std::string pending_json = BuildChatMessageJson(pending_message);
+        if (!SendTextFrame(client_fd, pending_json)) {
+            Logger::Instance().Warn(
+                "WebSocketServer",
+                "Failed to replay pending message_id=" + std::to_string(pending_message.message_id) +
+                    " client_id=" + client_id);
+            break;
+        }
+        chat_service.MarkMessageDelivered(client_id, pending_message.message_id);
+    }
+
     while (true) {
         const auto payload = ReadTextFrame(client_fd);
         if (!payload.has_value()) {
@@ -423,7 +436,9 @@ void HandleClientSocket(int client_fd, ChatService& chat_service) {
             SendTextFrame(client_fd, msg_json);
             const auto recipient_fd = g_session_registry.Get(persisted.message_to);
             if (recipient_fd.has_value()) {
-                SendTextFrame(recipient_fd.value(), msg_json);
+                if (SendTextFrame(recipient_fd.value(), msg_json)) {
+                    chat_service.MarkMessageDelivered(persisted.message_to, persisted.message_id);
+                }
             } else {
                 Logger::Instance().Warn(
                     "WebSocketServer",
