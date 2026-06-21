@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from itertools import count
+from threading import Lock
 from datetime import UTC, datetime
 
 from flask import Flask, render_template
@@ -8,6 +10,8 @@ from flask_sock import Sock
 
 app = Flask(__name__)
 sock = Sock(app)
+message_id_counter_ = count(start=1)
+message_id_lock_ = Lock()
 
 
 @app.get("/")
@@ -36,6 +40,10 @@ def chat_socket(ws) -> None:
             )
             continue
 
+        # Backend owns primary key generation; ignore any client-supplied id.
+        payload.pop("message_id", None)
+        with message_id_lock_:
+            payload["message_id"] = next(message_id_counter_)
         payload["created_at"] = datetime.now(UTC).isoformat()
         payload["type"] = "chat_message"
         ws.send(json.dumps(payload))

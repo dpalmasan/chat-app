@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "Logger.h"
+
 namespace chat {
 
 ChatService::ChatService(std::unique_ptr<MessageStore> message_store)
@@ -14,10 +16,12 @@ ChatService::ChatService(std::unique_ptr<MessageStore> message_store)
 }
 
 void ChatService::OnWebSocketOpen(const std::string& client_id) {
+    Logger::Instance().Info("ChatService", "WebSocket open for client_id=" + client_id);
     RegisterClient(client_id);
 }
 
 void ChatService::OnWebSocketClose(const std::string& client_id) {
+    Logger::Instance().Info("ChatService", "WebSocket close for client_id=" + client_id);
     UnregisterClient(client_id);
 }
 
@@ -50,13 +54,25 @@ void ChatService::UnregisterClient(const std::string& client_id) {
 }
 
 void ChatService::HandleIncomingMessage(const std::string& client_id, const ChatMessage& message) {
+    Logger::Instance().Debug(
+        "ChatService",
+        "Incoming message from=" + message.message_from +
+            " to=" + message.message_to +
+            " content=\"" + message.content + "\"");
+
     if (message.message_from != client_id) {
+        Logger::Instance().Warn(
+            "ChatService",
+            "Rejected message: message_from does not match client_id. client_id=" + client_id +
+                " message_from=" + message.message_from);
         throw std::invalid_argument("message_from must match websocket client id");
     }
     if (message.message_to.empty()) {
+        Logger::Instance().Warn("ChatService", "Rejected message: message_to is empty");
         throw std::invalid_argument("message_to must be provided for 1:1 chat");
     }
     if (message.content.empty()) {
+        Logger::Instance().Warn("ChatService", "Rejected message: content is empty");
         throw std::invalid_argument("content must be non-empty");
     }
 
@@ -64,7 +80,13 @@ void ChatService::HandleIncomingMessage(const std::string& client_id, const Chat
 }
 
 void ChatService::PersistMessage(const ChatMessage& message) {
-    message_store_->SaveMessage(message);
+    const ChatMessage persisted_message = message_store_->SaveMessage(message);
+    Logger::Instance().Info(
+        "ChatService",
+        "Persisted message_id=" + std::to_string(persisted_message.message_id) +
+            " from=" + persisted_message.message_from +
+            " to=" + persisted_message.message_to +
+            " content=\"" + persisted_message.content + "\"");
 }
 
 }  // namespace chat

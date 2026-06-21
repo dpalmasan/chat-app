@@ -112,11 +112,9 @@
 
       sendBtn.addEventListener("click", () => {
         const payload = {
-          message_id: Date.now(),
           message_from: document.getElementById("from").value,
           message_to: document.getElementById("to").value,
           content: document.getElementById("content").value,
-          created_at: new Date().toISOString(),
         };
 
         socket.send(JSON.stringify(payload));

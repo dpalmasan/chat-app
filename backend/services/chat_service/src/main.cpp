@@ -1,30 +1,17 @@
 #include <iostream>
 #include <memory>
-#include <mutex>
-#include <vector>
 
 #include "ChatService.h"
-
-namespace chat {
-
-class InMemoryMessageStore final : public MessageStore {
-public:
-    void SaveMessage(const ChatMessage& message) override {
-        std::lock_guard<std::mutex> lock(messages_mutex_);
-        messages_.push_back(message);
-    }
-
-private:
-    std::mutex messages_mutex_;
-    std::vector<ChatMessage> messages_;
-};
-
-}  // namespace chat
+#include "InMemoryMessageStore.h"
+#include "Logger.h"
 
 int main() {
+    chat::Logger::Instance().SetMinLevel(chat::LogLevel::kDebug);
+
     auto message_store = std::make_unique<chat::InMemoryMessageStore>();
     chat::ChatService service(std::move(message_store));
 
+    chat::Logger::Instance().Info("Main", "Chat service startup complete");
     std::cout << "Chat service boilerplate initialized." << std::endl;
     std::cout << "WebSocket wiring is pending; in-memory persistence is configured." << std::endl;
 

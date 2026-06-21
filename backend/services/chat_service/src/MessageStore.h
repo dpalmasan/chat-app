@@ -7,7 +7,7 @@ namespace chat {
 class MessageStore {
 public:
     virtual ~MessageStore() = default;
-    virtual void SaveMessage(const ChatMessage& message) = 0;
+    virtual ChatMessage SaveMessage(ChatMessage message) = 0;
 };
 
 }  // namespace chat
