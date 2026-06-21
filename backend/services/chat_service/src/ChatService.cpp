@@ -22,11 +22,26 @@ ChatService::ChatService(
 }
 
 void ChatService::OnWebSocketOpen(const std::string& client_id) {
+    if (!history_store_->UserExists(client_id)) {
+        logging::Logger::Instance().Warn(
+            "ChatService",
+            "Rejected websocket open: user not found client_id=" + client_id);
+        throw std::invalid_argument("user does not exist");
+    }
+
+    history_store_->SetPresence(client_id, true);
     logging::Logger::Instance().Info("ChatService", "WebSocket open for client_id=" + client_id);
     RegisterClient(client_id);
 }
 
 void ChatService::OnWebSocketClose(const std::string& client_id) {
+    try {
+        history_store_->SetPresence(client_id, false);
+    } catch (...) {
+        logging::Logger::Instance().Warn(
+            "ChatService",
+            "Failed to mark user offline for client_id=" + client_id);
+    }
     logging::Logger::Instance().Info("ChatService", "WebSocket close for client_id=" + client_id);
     UnregisterClient(client_id);
 }

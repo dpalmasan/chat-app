@@ -100,6 +100,12 @@ std::string SerializeMessage(const ChatMessage& message) {
            "|" + std::to_string(ToEpochMs(message.created_at));
 }
 
+std::string SerializeUser(const MessageStore::UserPresence& user) {
+    return UrlEncode(user.user_id) +
+           "|" + (user.is_online ? "online" : "offline") +
+           "|" + std::to_string(ToEpochMs(user.last_active_at));
+}
+
 void HandleClient(int client_fd, MessageStore& store) {
     try {
         const std::string request = ReadLine(client_fd);
@@ -170,6 +176,35 @@ void HandleClient(int client_fd, MessageStore& store) {
             return;
         }
 
+        if (tokens[0] == "LOAD_HISTORY") {
+            if (tokens.size() != 2) {
+                SendAll(client_fd, "ERR|invalid load_history request\n");
+                close(client_fd);
+                return;
+            }
+
+            const std::string user_id = UrlDecode(tokens[1]);
+            const std::vector<ChatMessage> history = store.LoadHistoryFor(user_id);
+
+            logging::Logger::Instance().Info(
+                "DbService",
+                "LOAD_HISTORY user_id=" + user_id +
+                    " count=" + std::to_string(history.size()));
+
+            std::ostringstream response;
+            response << "OK|";
+            for (std::size_t i = 0; i < history.size(); ++i) {
+                if (i > 0) {
+                    response << ';';
+                }
+                response << SerializeMessage(history[i]);
+            }
+            response << "\n";
+            SendAll(client_fd, response.str());
+            close(client_fd);
+            return;
+        }
+
         if (tokens[0] == "MARK_DELIVERED") {
             if (tokens.size() != 3) {
                 SendAll(client_fd, "ERR|invalid mark_delivered request\n");
@@ -188,6 +223,80 @@ void HandleClient(int client_fd, MessageStore& store) {
                     " message_id=" + std::to_string(message_id));
 
             SendAll(client_fd, "OK|ACK\n");
+            close(client_fd);
+            return;
+        }
+
+        if (tokens[0] == "LOGIN") {
+            if (tokens.size() != 2) {
+                SendAll(client_fd, "ERR|invalid login request\n");
+                close(client_fd);
+                return;
+            }
+
+            const std::string user_id = UrlDecode(tokens[1]);
+            const MessageStore::UserPresence user = store.LoginUser(user_id);
+            logging::Logger::Instance().Info("DbService", "LOGIN user_id=" + user_id);
+            SendAll(client_fd, "OK|" + SerializeUser(user) + "\n");
+            close(client_fd);
+            return;
+        }
+
+        if (tokens[0] == "USER_EXISTS") {
+            if (tokens.size() != 2) {
+                SendAll(client_fd, "ERR|invalid user_exists request\n");
+                close(client_fd);
+                return;
+            }
+
+            const std::string user_id = UrlDecode(tokens[1]);
+            const bool exists = store.UserExists(user_id);
+            SendAll(client_fd, std::string("OK|") + (exists ? "1" : "0") + "\n");
+            close(client_fd);
+            return;
+        }
+
+        if (tokens[0] == "SET_PRESENCE") {
+            if (tokens.size() != 3) {
+                SendAll(client_fd, "ERR|invalid set_presence request\n");
+                close(client_fd);
+                return;
+            }
+
+            const std::string user_id = UrlDecode(tokens[1]);
+            if (tokens[2] != "online" && tokens[2] != "offline") {
+                SendAll(client_fd, "ERR|invalid presence status\n");
+                close(client_fd);
+                return;
+            }
+
+            store.SetPresence(user_id, tokens[2] == "online");
+            logging::Logger::Instance().Info(
+                "DbService",
+                "SET_PRESENCE user_id=" + user_id + " status=" + tokens[2]);
+            SendAll(client_fd, "OK|ACK\n");
+            close(client_fd);
+            return;
+        }
+
+        if (tokens[0] == "LIST_USERS") {
+            if (tokens.size() != 1) {
+                SendAll(client_fd, "ERR|invalid list_users request\n");
+                close(client_fd);
+                return;
+            }
+
+            const std::vector<MessageStore::UserPresence> users = store.ListUsers();
+            std::ostringstream response;
+            response << "OK|";
+            for (std::size_t i = 0; i < users.size(); ++i) {
+                if (i > 0) {
+                    response << ';';
+                }
+                response << SerializeUser(users[i]);
+            }
+            response << "\n";
+            SendAll(client_fd, response.str());
             close(client_fd);
             return;
         }

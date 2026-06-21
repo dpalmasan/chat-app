@@ -87,6 +87,34 @@ void RemoteMessageStore::MarkMessageDelivered(const UserId& recipient_id, Messag
     static_cast<void>(SendRequest(request));
 }
 
+bool RemoteMessageStore::UserExists(const UserId& user_id) {
+    const std::string request = "USER_EXISTS|" + UrlEncode(user_id) + "\n";
+    return SendRequest(request) == "1";
+}
+
+void RemoteMessageStore::SetPresence(const UserId& user_id, bool is_online) {
+    const std::string request =
+        "SET_PRESENCE|" + UrlEncode(user_id) +
+        "|" + (is_online ? "online" : "offline") + "\n";
+    static_cast<void>(SendRequest(request));
+}
+
+std::vector<MessageStore::UserPresence> RemoteMessageStore::ListUsers() {
+    const std::string request = "LIST_USERS\n";
+    const std::string response = SendRequest(request);
+
+    const std::vector<std::string> entries = Split(response, ';');
+    std::vector<UserPresence> users;
+    users.reserve(entries.size());
+    for (const std::string& entry : entries) {
+        if (entry.empty()) {
+            continue;
+        }
+        users.push_back(ParseUserLine(entry));
+    }
+    return users;
+}
+
 std::string RemoteMessageStore::SendRequest(const std::string& request) {
     const int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
@@ -103,7 +131,7 @@ std::string RemoteMessageStore::SendRequest(const std::string& request) {
 
     if (connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
         close(sock);
-        throw std::runtime_error("failed to connect to remote message queue worker");
+        throw std::runtime_error("failed to connect to remote db service");
     }
 
     SendAll(sock, request);
@@ -172,6 +200,25 @@ ChatMessage RemoteMessageStore::ParseMessageLine(const std::string& line) {
     message.content = UrlDecode(tokens[3]);
     message.created_at = EpochMsToTimePoint(ParseUint64(tokens[4]));
     return message;
+}
+
+MessageStore::UserPresence RemoteMessageStore::ParseUserLine(const std::string& line) {
+    const std::vector<std::string> tokens = Split(line, '|');
+    if (tokens.size() != 3) {
+        throw std::runtime_error("invalid user payload");
+    }
+
+    UserPresence user;
+    user.user_id = UrlDecode(tokens[0]);
+    if (tokens[1] == "online") {
+        user.is_online = true;
+    } else if (tokens[1] == "offline") {
+        user.is_online = false;
+    } else {
+        throw std::runtime_error("invalid user status payload");
+    }
+    user.last_active_at = EpochMsToTimePoint(ParseUint64(tokens[2]));
+    return user;
 }
 
 }  // namespace chat

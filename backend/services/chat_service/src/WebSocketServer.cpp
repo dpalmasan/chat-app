@@ -443,7 +443,14 @@ void HandleClientSocket(int client_fd, ChatService& chat_service) {
     logging::Logger::Instance().Info("WebSocketServer", "Handshake complete for client_id=" + client_id);
     auto client_send_mutex = std::make_shared<std::mutex>();
     g_session_registry.Add(client_id, client_fd, client_send_mutex);
-    chat_service.OnWebSocketOpen(client_id);
+    try {
+        chat_service.OnWebSocketOpen(client_id);
+    } catch (const std::exception& ex) {
+        SendWithLock(client_fd, client_send_mutex, BuildErrorJson(ex.what()));
+        g_session_registry.Remove(client_id);
+        close(client_fd);
+        return;
+    }
 
     // Dedicated poller keeps this client synchronized with messages produced on other servers.
     std::atomic<bool> running{true};
