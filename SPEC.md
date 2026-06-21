@@ -21,6 +21,11 @@ For the data, we will just have a simple struct that holds the data sent from th
 The service can handle multiple clients, for this I assume we use threads for a service instance, and we should keep track of the clients.
 
 
+#### Step 2
+
+Starting scale handling, as clients might be connected to different servers. We need an event driven mechanism, using synchronous queues to process the messages. We need a subscriber to the event that once the event is triggered, it writes it to the Data Store. The queue is visible for all the servers. Then we can poll messages from the data store. The message queue should be abstract, and later we can implement it using Kafka or some message queue provider.
+
+
 ## Clients
 
 ### Web Client
