@@ -23,8 +23,6 @@ The service can handle multiple clients, for this I assume we use threads for a 
 
 ## Clients
 
-### Chat APP
-
-#### Web Client
+### Web Client
 
 We will have a very simple web client. Since we are not using HTTP and Web Sockets, we need to figure out how we will implemente this. The web client will be implemented in Flask.
