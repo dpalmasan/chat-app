@@ -25,8 +25,8 @@ void ChatService::OnWebSocketClose(const std::string& client_id) {
     UnregisterClient(client_id);
 }
 
-void ChatService::OnWebSocketMessage(const std::string& client_id, const ChatMessage& message) {
-    HandleIncomingMessage(client_id, message);
+ChatMessage ChatService::OnWebSocketMessage(const std::string& client_id, const ChatMessage& message) {
+    return HandleIncomingMessage(client_id, message);
 }
 
 std::vector<std::string> ChatService::ConnectedClients() const {
@@ -53,7 +53,7 @@ void ChatService::UnregisterClient(const std::string& client_id) {
     connected_clients_.erase(client_id);
 }
 
-void ChatService::HandleIncomingMessage(const std::string& client_id, const ChatMessage& message) {
+ChatMessage ChatService::HandleIncomingMessage(const std::string& client_id, const ChatMessage& message) {
     Logger::Instance().Debug(
         "ChatService",
         "Incoming message from=" + message.message_from +
@@ -76,10 +76,10 @@ void ChatService::HandleIncomingMessage(const std::string& client_id, const Chat
         throw std::invalid_argument("content must be non-empty");
     }
 
-    PersistMessage(message);
+    return PersistMessage(message);
 }
 
-void ChatService::PersistMessage(const ChatMessage& message) {
+ChatMessage ChatService::PersistMessage(const ChatMessage& message) {
     const ChatMessage persisted_message = message_store_->SaveMessage(message);
     Logger::Instance().Info(
         "ChatService",
@@ -87,6 +87,7 @@ void ChatService::PersistMessage(const ChatMessage& message) {
             " from=" + persisted_message.message_from +
             " to=" + persisted_message.message_to +
             " content=\"" + persisted_message.content + "\"");
+    return persisted_message;
 }
 
 }  // namespace chat

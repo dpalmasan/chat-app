@@ -74,11 +74,16 @@
     <p>Step 1 boilerplate client using Flask + WebSockets.</p>
 
     <div class="panel">
-      <div class="status" id="status">Connecting...</div>
+      <div class="status" id="status">Disconnected</div>
 
       <div class="row">
-        <input id="from" placeholder="message_from" value="user_a" />
+        <input id="client_id" placeholder="client_id" value="user_a" />
         <input id="to" placeholder="message_to" value="user_b" />
+      </div>
+
+      <div class="row" style="grid-template-columns: 1fr 180px">
+        <input id="ws_base" placeholder="WebSocket endpoint" value="ws://127.0.0.1:8080/ws" />
+        <button id="connect">Connect</button>
       </div>
 
       <div class="row" style="grid-template-columns: 1fr">
@@ -94,25 +99,59 @@
       const statusEl = document.getElementById("status");
       const messagesEl = document.getElementById("messages");
       const sendBtn = document.getElementById("send");
+      const connectBtn = document.getElementById("connect");
+      let socket = null;
 
-      const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
-      const socket = new WebSocket(`${wsScheme}://${window.location.host}/ws`);
+      function appendMessage(line) {
+        messagesEl.textContent += `${line}\n`;
+      }
 
-      socket.onopen = () => {
-        statusEl.textContent = "Connected";
-      };
+      function connect() {
+        const clientId = document.getElementById("client_id").value.trim();
+        const base = document.getElementById("ws_base").value.trim();
+        if (!clientId || !base) {
+          statusEl.textContent = "client_id and endpoint are required";
+          return;
+        }
 
-      socket.onclose = () => {
-        statusEl.textContent = "Disconnected";
-      };
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.close();
+        }
 
-      socket.onmessage = (event) => {
-        messagesEl.textContent += `${event.data}\n`;
-      };
+        statusEl.textContent = "Connecting...";
+        const connector = base.includes("?") ? "&" : "?";
+        socket = new WebSocket(`${base}${connector}client_id=${encodeURIComponent(clientId)}`);
+
+        socket.onopen = () => {
+          statusEl.textContent = `Connected as ${clientId}`;
+          appendMessage(`connected:${clientId}`);
+        };
+
+        socket.onclose = () => {
+          statusEl.textContent = "Disconnected";
+          appendMessage("disconnected");
+        };
+
+        socket.onmessage = (event) => {
+          appendMessage(event.data);
+        };
+
+        socket.onerror = () => {
+          statusEl.textContent = "Socket error";
+        };
+      }
+
+      connectBtn.addEventListener("click", connect);
 
       sendBtn.addEventListener("click", () => {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+          statusEl.textContent = "Connect first";
+          return;
+        }
+
+        const clientId = document.getElementById("client_id").value.trim();
         const payload = {
-          message_from: document.getElementById("from").value,
+          message_from: clientId,
           message_to: document.getElementById("to").value,
           content: document.getElementById("content").value,
         };

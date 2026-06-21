@@ -28,17 +28,17 @@ public:
 
     void OnWebSocketOpen(const std::string& client_id);
     void OnWebSocketClose(const std::string& client_id);
-    void OnWebSocketMessage(const std::string& client_id, const ChatMessage& message);
+    ChatMessage OnWebSocketMessage(const std::string& client_id, const ChatMessage& message);
 
     std::vector<std::string> ConnectedClients() const;
 
 private:
     void RegisterClient(const std::string& client_id);
     void UnregisterClient(const std::string& client_id);
-    void HandleIncomingMessage(const std::string& client_id, const ChatMessage& message);
+    ChatMessage HandleIncomingMessage(const std::string& client_id, const ChatMessage& message);
 
-    // Placeholder for future persistence implementation.
-    void PersistMessage(const ChatMessage& message);
+    // Persists and returns canonical message fields (ids/timestamps).
+    ChatMessage PersistMessage(const ChatMessage& message);
 
     std::unique_ptr<MessageStore> message_store_;
     mutable std::mutex clients_mutex_;

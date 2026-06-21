@@ -10,6 +10,8 @@ add_executable(chat_service
     src/ChatService.cpp
     src/InMemoryMessageStore.cpp
     src/Logger.cpp
+    src/WebSocketServer.cpp
 )
 
 target_include_directories(chat_service PRIVATE src)
+target_link_libraries(chat_service PRIVATE crypto)
