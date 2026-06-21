@@ -9,6 +9,12 @@ namespace chat {
 using MessageId = std::uint64_t;
 using UserId = std::string;
 
+/**
+ * @brief Canonical chat message model used inside chat_service.
+ *
+ * This type carries both user payload fields and server-owned metadata
+ * (`message_id` and `created_at`) returned by backend services.
+ */
 struct ChatMessage {
     MessageId message_id{};
     UserId message_from;

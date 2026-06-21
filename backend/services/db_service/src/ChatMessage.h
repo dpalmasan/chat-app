@@ -9,6 +9,9 @@ namespace db_service {
 using MessageId = std::uint64_t;
 using UserId = std::string;
 
+/**
+ * @brief Canonical persisted chat message model in db_service.
+ */
 struct ChatMessage {
     MessageId message_id{};
     UserId message_from;

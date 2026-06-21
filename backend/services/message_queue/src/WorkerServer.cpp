@@ -29,6 +29,7 @@ std::string ReadLine(int fd) {
             return "";
         }
         if (c == '\n') {
+            // Line-delimited protocol: one request per connection.
             break;
         }
         line.push_back(c);
@@ -133,6 +134,7 @@ void HandleClient(int client_fd, MessageQueue& queue) {
 
             auto completion = std::make_shared<std::promise<ChatMessage>>();
             std::future<ChatMessage> persisted_future = completion->get_future();
+            // Queue write is async internally, but API remains sync by awaiting completion.
             queue.Publish(MessageEvent{message, completion});
             const ChatMessage persisted = persisted_future.get();
             logging::Logger::Instance().Info(
@@ -196,6 +198,7 @@ void WorkerServer::Run(std::uint16_t port) {
         }
 
         std::thread([client_fd, this]() {
+            // Keep accept loop responsive; each client request is handled on its own thread.
             HandleClient(client_fd, queue_);
         }).detach();
     }

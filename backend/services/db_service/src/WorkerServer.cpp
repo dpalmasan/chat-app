@@ -28,6 +28,7 @@ std::string ReadLine(int fd) {
             return "";
         }
         if (c == '\n') {
+            // Line-delimited protocol: each connection sends one command line.
             break;
         }
         line.push_back(c);
@@ -125,6 +126,7 @@ void HandleClient(int client_fd, MessageStore& store) {
             message.message_from = UrlDecode(tokens[1]);
             message.message_to = UrlDecode(tokens[2]);
             message.content = UrlDecode(tokens[3]);
+            // Storage assigns canonical metadata (`message_id`, `created_at`) on save.
             const ChatMessage persisted = store.SaveMessage(message);
 
             logging::Logger::Instance().Info(
@@ -146,6 +148,7 @@ void HandleClient(int client_fd, MessageStore& store) {
             }
 
             const std::string recipient = UrlDecode(tokens[1]);
+            // Pending set excludes messages already marked delivered for this recipient.
             const std::vector<ChatMessage> pending = store.LoadPendingMessagesFor(recipient);
 
             logging::Logger::Instance().Info(
@@ -176,6 +179,7 @@ void HandleClient(int client_fd, MessageStore& store) {
 
             const std::string recipient = UrlDecode(tokens[1]);
             const MessageId message_id = static_cast<MessageId>(std::stoull(tokens[2]));
+            // Delivery mark is idempotent; repeat requests are safe.
             store.MarkMessageDelivered(recipient, message_id);
 
             logging::Logger::Instance().Info(
@@ -238,6 +242,7 @@ void WorkerServer::Run(std::uint16_t port) {
         }
 
         std::thread([client_fd, this]() {
+            // Handle each client on a detached thread so accept loop stays non-blocking.
             HandleClient(client_fd, store_);
         }).detach();
     }

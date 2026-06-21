@@ -170,6 +170,7 @@ bool PerformHandshake(int fd, std::string* client_id) {
         return false;
     }
 
+    // RFC 6455 handshake: server accepts by SHA1(key + fixed GUID), then Base64.
     const std::string accept = ComputeWebSocketAccept(sec_key.value());
     const std::string response =
         "HTTP/1.1 101 Switching Protocols\r\n"
@@ -202,6 +203,7 @@ std::optional<std::string> ReadTextFrame(int fd) {
 
     const bool masked = (header[1] & 0x80U) != 0;
     if (!masked) {
+        // Browser -> server frames must be masked; reject non-browser style input.
         return std::nullopt;
     }
 
@@ -396,6 +398,7 @@ bool SendWithLock(
     int fd,
     const std::shared_ptr<std::mutex>& send_mutex,
     const std::string& payload) {
+    // A socket can be written from the reader thread and poller thread; serialize writes.
     std::lock_guard<std::mutex> lock(*send_mutex);
     return SendTextFrame(fd, payload);
 }
@@ -408,12 +411,14 @@ void PendingDeliveryLoop(
     std::atomic<bool>& running) {
     while (running.load()) {
         try {
+            // Cross-instance delivery: periodically pull pending messages from shared backend.
             const std::vector<ChatMessage> pending_messages =
                 chat_service.LoadPendingMessagesForClient(client_id);
             for (const ChatMessage& pending_message : pending_messages) {
                 const std::string pending_json = BuildChatMessageJson(pending_message);
                 if (!SendWithLock(client_fd, send_mutex, pending_json)) {
                     running.store(false);
+                    // Force reader loop to exit promptly if socket is no longer writable.
                     shutdown(client_fd, SHUT_RDWR);
                     return;
                 }
@@ -440,6 +445,7 @@ void HandleClientSocket(int client_fd, ChatService& chat_service) {
     g_session_registry.Add(client_id, client_fd, client_send_mutex);
     chat_service.OnWebSocketOpen(client_id);
 
+    // Dedicated poller keeps this client synchronized with messages produced on other servers.
     std::atomic<bool> running{true};
     std::thread pending_delivery_thread(PendingDeliveryLoop,
                                         client_id,
@@ -474,6 +480,7 @@ void HandleClientSocket(int client_fd, ChatService& chat_service) {
             SendWithLock(client_fd, client_send_mutex, msg_json);
             const auto recipient = g_session_registry.Get(persisted.message_to);
             if (recipient.has_value()) {
+                // Fast path for same-process recipient; remote recipients are handled by polling.
                 if (SendWithLock(recipient->fd, recipient->send_mutex, msg_json)) {
                     chat_service.MarkMessageDelivered(persisted.message_to, persisted.message_id);
                 }

@@ -9,6 +9,9 @@ namespace message_queue {
 using MessageId = std::uint64_t;
 using UserId = std::string;
 
+/**
+ * @brief Message payload used by the message_queue service.
+ */
 struct ChatMessage {
     MessageId message_id{};
     UserId message_from;

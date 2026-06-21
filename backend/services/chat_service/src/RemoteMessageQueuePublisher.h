@@ -8,10 +8,15 @@
 
 namespace chat {
 
+/**
+ * @brief TCP client that publishes chat writes to the message_queue worker.
+ */
 class RemoteMessageQueuePublisher final : public MessagePublisher {
 public:
+    /** @param host Message queue worker host. @param port Message queue worker port. */
     RemoteMessageQueuePublisher(std::string host, std::uint16_t port);
 
+    /** @inheritdoc MessagePublisher::PublishMessage */
     ChatMessage PublishMessage(const ChatMessage& message) override;
 
 private:

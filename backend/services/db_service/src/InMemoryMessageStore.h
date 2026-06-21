@@ -9,10 +9,19 @@
 
 namespace db_service {
 
+/**
+ * @brief In-process datastore implementation for db_service.
+ *
+ * Designed as a prototype backing store that can later be replaced by a
+ * production adapter (for example MongoDB) behind the same MessageStore API.
+ */
 class InMemoryMessageStore final : public MessageStore {
 public:
+    /** @inheritdoc MessageStore::SaveMessage */
     ChatMessage SaveMessage(ChatMessage message) override;
+    /** @inheritdoc MessageStore::LoadPendingMessagesFor */
     std::vector<ChatMessage> LoadPendingMessagesFor(const UserId& recipient_id) override;
+    /** @inheritdoc MessageStore::MarkMessageDelivered */
     void MarkMessageDelivered(const UserId& recipient_id, MessageId message_id) override;
 
 private:
