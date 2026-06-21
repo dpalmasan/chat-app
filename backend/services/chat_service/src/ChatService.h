@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "ChatMessage.h"
+#include "MessagePublisher.h"
 #include "MessageStore.h"
 
 namespace chat {
@@ -19,7 +20,9 @@ struct ClientSession {
 
 class ChatService {
 public:
-    explicit ChatService(std::unique_ptr<MessageStore> message_store);
+    ChatService(
+        std::unique_ptr<MessagePublisher> message_publisher,
+        std::unique_ptr<MessageStore> history_store);
 
     ChatService(const ChatService&) = delete;
     ChatService& operator=(const ChatService&) = delete;
@@ -42,7 +45,8 @@ private:
     // Persists and returns canonical message fields (ids/timestamps).
     ChatMessage PersistMessage(const ChatMessage& message);
 
-    std::unique_ptr<MessageStore> message_store_;
+    std::unique_ptr<MessagePublisher> message_publisher_;
+    std::unique_ptr<MessageStore> history_store_;
     mutable std::mutex clients_mutex_;
     std::unordered_map<std::string, ClientSession> connected_clients_;
 };

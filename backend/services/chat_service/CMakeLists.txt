@@ -8,10 +8,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_executable(chat_service
     src/main.cpp
     src/ChatService.cpp
-    src/InMemoryMessageStore.cpp
-    src/Logger.cpp
+    src/RemoteMessageQueuePublisher.cpp
+    src/RemoteMessageStore.cpp
     src/WebSocketServer.cpp
+    ../../libs/logger/src/Logger.cpp
 )
 
-target_include_directories(chat_service PRIVATE src)
+target_include_directories(chat_service PRIVATE src ../../libs/logger/include)
 target_link_libraries(chat_service PRIVATE crypto)

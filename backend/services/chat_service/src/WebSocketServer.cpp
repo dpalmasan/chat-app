@@ -7,8 +7,10 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <atomic>
 #include <cstring>
 #include <iomanip>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -359,9 +361,14 @@ std::string BuildErrorJson(const std::string& message) {
 
 class SessionRegistry {
 public:
-    void Add(const std::string& client_id, int fd) {
+    struct SessionConnection {
+        int fd = -1;
+        std::shared_ptr<std::mutex> send_mutex;
+    };
+
+    void Add(const std::string& client_id, int fd, std::shared_ptr<std::mutex> send_mutex) {
         std::lock_guard<std::mutex> lock(mutex_);
-        sockets_[client_id] = fd;
+        sockets_[client_id] = SessionConnection{fd, std::move(send_mutex)};
     }
 
     void Remove(const std::string& client_id) {
@@ -369,7 +376,7 @@ public:
         sockets_.erase(client_id);
     }
 
-    std::optional<int> Get(const std::string& client_id) {
+    std::optional<SessionConnection> Get(const std::string& client_id) {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto it = sockets_.find(client_id);
         if (it == sockets_.end()) {
@@ -380,35 +387,66 @@ public:
 
 private:
     std::mutex mutex_;
-    std::unordered_map<std::string, int> sockets_;
+    std::unordered_map<std::string, SessionConnection> sockets_;
 };
 
 SessionRegistry g_session_registry;
 
+bool SendWithLock(
+    int fd,
+    const std::shared_ptr<std::mutex>& send_mutex,
+    const std::string& payload) {
+    std::lock_guard<std::mutex> lock(*send_mutex);
+    return SendTextFrame(fd, payload);
+}
+
+void PendingDeliveryLoop(
+    const std::string& client_id,
+    int client_fd,
+    const std::shared_ptr<std::mutex>& send_mutex,
+    ChatService& chat_service,
+    std::atomic<bool>& running) {
+    while (running.load()) {
+        try {
+            const std::vector<ChatMessage> pending_messages =
+                chat_service.LoadPendingMessagesForClient(client_id);
+            for (const ChatMessage& pending_message : pending_messages) {
+                const std::string pending_json = BuildChatMessageJson(pending_message);
+                if (!SendWithLock(client_fd, send_mutex, pending_json)) {
+                    running.store(false);
+                    shutdown(client_fd, SHUT_RDWR);
+                    return;
+                }
+                chat_service.MarkMessageDelivered(client_id, pending_message.message_id);
+            }
+        } catch (...) {
+            // Keep poll loop resilient to temporary backend errors.
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+}
+
 void HandleClientSocket(int client_fd, ChatService& chat_service) {
     std::string client_id;
     if (!PerformHandshake(client_fd, &client_id)) {
-        Logger::Instance().Warn("WebSocketServer", "Handshake failed; closing client socket");
+        logging::Logger::Instance().Warn("WebSocketServer", "Handshake failed; closing client socket");
         close(client_fd);
         return;
     }
 
-    Logger::Instance().Info("WebSocketServer", "Handshake complete for client_id=" + client_id);
-    g_session_registry.Add(client_id, client_fd);
+    logging::Logger::Instance().Info("WebSocketServer", "Handshake complete for client_id=" + client_id);
+    auto client_send_mutex = std::make_shared<std::mutex>();
+    g_session_registry.Add(client_id, client_fd, client_send_mutex);
     chat_service.OnWebSocketOpen(client_id);
 
-    const std::vector<ChatMessage> pending_messages = chat_service.LoadPendingMessagesForClient(client_id);
-    for (const ChatMessage& pending_message : pending_messages) {
-        const std::string pending_json = BuildChatMessageJson(pending_message);
-        if (!SendTextFrame(client_fd, pending_json)) {
-            Logger::Instance().Warn(
-                "WebSocketServer",
-                "Failed to replay pending message_id=" + std::to_string(pending_message.message_id) +
-                    " client_id=" + client_id);
-            break;
-        }
-        chat_service.MarkMessageDelivered(client_id, pending_message.message_id);
-    }
+    std::atomic<bool> running{true};
+    std::thread pending_delivery_thread(PendingDeliveryLoop,
+                                        client_id,
+                                        client_fd,
+                                        client_send_mutex,
+                                        std::ref(chat_service),
+                                        std::ref(running));
 
     while (true) {
         const auto payload = ReadTextFrame(client_fd);
@@ -433,28 +471,33 @@ void HandleClientSocket(int client_fd, ChatService& chat_service) {
             const ChatMessage persisted = chat_service.OnWebSocketMessage(client_id, message);
             const std::string msg_json = BuildChatMessageJson(persisted);
 
-            SendTextFrame(client_fd, msg_json);
-            const auto recipient_fd = g_session_registry.Get(persisted.message_to);
-            if (recipient_fd.has_value()) {
-                if (SendTextFrame(recipient_fd.value(), msg_json)) {
+            SendWithLock(client_fd, client_send_mutex, msg_json);
+            const auto recipient = g_session_registry.Get(persisted.message_to);
+            if (recipient.has_value()) {
+                if (SendWithLock(recipient->fd, recipient->send_mutex, msg_json)) {
                     chat_service.MarkMessageDelivered(persisted.message_to, persisted.message_id);
                 }
             } else {
-                Logger::Instance().Warn(
+                logging::Logger::Instance().Warn(
                     "WebSocketServer",
                     "Recipient not connected for message_id=" + std::to_string(persisted.message_id) +
                         " recipient=" + persisted.message_to);
             }
         } catch (const std::exception& ex) {
-            Logger::Instance().Warn("WebSocketServer", std::string("Rejected message: ") + ex.what());
+            logging::Logger::Instance().Warn("WebSocketServer", std::string("Rejected message: ") + ex.what());
             SendTextFrame(client_fd, BuildErrorJson(ex.what()));
         }
+    }
+
+    running.store(false);
+    if (pending_delivery_thread.joinable()) {
+        pending_delivery_thread.join();
     }
 
     g_session_registry.Remove(client_id);
     chat_service.OnWebSocketClose(client_id);
     close(client_fd);
-    Logger::Instance().Info("WebSocketServer", "Client disconnected client_id=" + client_id);
+    logging::Logger::Instance().Info("WebSocketServer", "Client disconnected client_id=" + client_id);
 }
 
 }  // namespace
@@ -496,7 +539,7 @@ void WebSocketServer::Run(const std::string& host, std::uint16_t port) {
         throw std::runtime_error("Listen failed");
     }
 
-    Logger::Instance().Info(
+    logging::Logger::Instance().Info(
         "WebSocketServer",
         "Listening on ws://" + host + ":" + std::to_string(port) + "/ws?client_id=<id>");
 
@@ -505,7 +548,7 @@ void WebSocketServer::Run(const std::string& host, std::uint16_t port) {
         socklen_t client_len = sizeof(client_address);
         const int client_fd = accept(listen_fd, reinterpret_cast<sockaddr*>(&client_address), &client_len);
         if (client_fd < 0) {
-            Logger::Instance().Warn("WebSocketServer", "accept failed; continuing");
+            logging::Logger::Instance().Warn("WebSocketServer", "accept failed; continuing");
             continue;
         }
 
