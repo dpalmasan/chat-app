@@ -81,7 +81,6 @@ void InMemoryMessageStore::MarkMessageDelivered(const UserId& recipient_id, Mess
 MessageStore::UserPresence InMemoryMessageStore::LoginUser(const UserId& user_id) {
     std::lock_guard<std::mutex> lock(messages_mutex_);
     auto user_it = RequireUser(user_id);
-    user_it->second.is_online = true;
     user_it->second.last_active_at = std::chrono::system_clock::now();
     return user_it->second;
 }
@@ -94,7 +93,15 @@ bool InMemoryMessageStore::UserExists(const UserId& user_id) {
 void InMemoryMessageStore::SetPresence(const UserId& user_id, bool is_online) {
     std::lock_guard<std::mutex> lock(messages_mutex_);
     auto user_it = RequireUser(user_id);
-    user_it->second.is_online = is_online;
+
+    std::size_t& active_connections = active_connections_by_user_[user_id];
+    if (is_online) {
+        ++active_connections;
+    } else if (active_connections > 0) {
+        --active_connections;
+    }
+
+    user_it->second.is_online = active_connections > 0;
     user_it->second.last_active_at = std::chrono::system_clock::now();
 }
 

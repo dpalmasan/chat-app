@@ -291,7 +291,26 @@ std::optional<std::string> ExtractJsonStringValue(const std::string& json, const
     for (std::size_t i = quote_start; i < json.size(); ++i) {
         const char c = json[i];
         if (escaped) {
-            value.push_back(c);
+            switch (c) {
+                case 'n':
+                    value.push_back('\n');
+                    break;
+                case 'r':
+                    value.push_back('\r');
+                    break;
+                case 't':
+                    value.push_back('\t');
+                    break;
+                case '\\':
+                    value.push_back('\\');
+                    break;
+                case '"':
+                    value.push_back('"');
+                    break;
+                default:
+                    value.push_back(c);
+                    break;
+            }
             escaped = false;
             continue;
         }

@@ -46,6 +46,7 @@ private:
     std::vector<ChatMessage> messages_;
     std::unordered_map<UserId, std::unordered_set<MessageId>> delivered_message_ids_;
     PresenceByUser users_;
+    std::unordered_map<UserId, std::size_t> active_connections_by_user_;
 };
 
 }  // namespace db_service

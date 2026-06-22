@@ -32,6 +32,10 @@ Simple authentication. Let's assume we have a service for authentication. There 
 
 We need to add to the data store a user object, which has the user id, the status (online/offline) and a last_active_at timestamp. We implement this as a presence server, the ws connection will check whether the use is present or not.
 
+#### Step 4
+
+Now we start getting to a production-ish stage. We implement a Data Store based on MongoDB. This is persistent, so even if we close the chat service/DB service, message queue and restart, we should be able to see the messages. It is already populated with the users for the presence server.
+
 
 ## Clients
 

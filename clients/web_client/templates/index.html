@@ -209,6 +209,11 @@
         font-size: 0.72rem;
       }
 
+      .message .text {
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
       .composer-row {
         display: grid;
         grid-template-columns: 1fr auto;
@@ -347,6 +352,17 @@
         return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       }
 
+      function normalizeMessageText(rawText) {
+        if (typeof rawText !== "string") {
+          return "";
+        }
+        return rawText
+          .replace(/\\r\\n/g, "\n")
+          .replace(/\\n/g, "\n")
+          .replace(/\\r/g, "\r")
+          .replace(/\\t/g, "\t");
+      }
+
       function setStatus(text) {
         statusEl.textContent = text;
       }
@@ -466,7 +482,7 @@
         for (const msg of messages) {
           const node = msgTpl.content.firstElementChild.cloneNode(true);
           node.classList.add(msg.message_from === currentUser ? "outgoing" : "incoming");
-          node.querySelector(".text").textContent = msg.content;
+          node.querySelector(".text").textContent = normalizeMessageText(msg.content);
           node.querySelector(".meta").textContent = formatTime(msg.created_at);
           threadEl.appendChild(node);
         }
