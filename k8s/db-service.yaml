@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-service
+  namespace: chat-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db-service
+  template:
+    metadata:
+      labels:
+        app: db-service
+    spec:
+      containers:
+      - name: db-service
+        image: chat-app/db-service:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: MONGODB_URI
+          value: mongodb://mongodb:27017
+        - name: MONGODB_DB_NAME
+          value: chat_app
+        ports:
+        - containerPort: 9091
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-service
+  namespace: chat-app
+spec:
+  selector:
+    app: db-service
+  ports:
+  - name: tcp
+    port: 9091
+    targetPort: 9091

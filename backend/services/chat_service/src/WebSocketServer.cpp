@@ -188,61 +188,96 @@ bool PerformHandshake(int fd, std::string* client_id) {
 }
 
 std::optional<std::string> ReadTextFrame(int fd) {
-    unsigned char header[2];
-    if (!RecvAll(fd, header, sizeof(header))) {
-        return std::nullopt;
-    }
-
-    const unsigned char opcode = header[0] & 0x0F;
-    if (opcode == 0x8) {
-        return std::nullopt;
-    }
-    if (opcode != 0x1) {
-        return std::nullopt;
-    }
-
-    const bool masked = (header[1] & 0x80U) != 0;
-    if (!masked) {
-        // Browser -> server frames must be masked; reject non-browser style input.
-        return std::nullopt;
-    }
-
-    std::uint64_t payload_len = header[1] & 0x7FU;
-    if (payload_len == 126) {
-        unsigned char ext[2];
-        if (!RecvAll(fd, ext, sizeof(ext))) {
+    while (true) {
+        unsigned char header[2];
+        if (!RecvAll(fd, header, sizeof(header))) {
             return std::nullopt;
         }
-        payload_len = (static_cast<std::uint64_t>(ext[0]) << 8U) | ext[1];
-    } else if (payload_len == 127) {
-        unsigned char ext[8];
-        if (!RecvAll(fd, ext, sizeof(ext))) {
+
+        const unsigned char opcode = header[0] & 0x0F;
+        if (opcode == 0x8) {
             return std::nullopt;
         }
-        payload_len = 0;
-        for (int i = 0; i < 8; ++i) {
-            payload_len = (payload_len << 8U) | ext[i];
+
+        const bool masked = (header[1] & 0x80U) != 0;
+        if (!masked) {
+            // Browser -> server frames must be masked; reject non-browser style input.
+            return std::nullopt;
         }
-    }
 
-    if (payload_len > kMaxFrameSize) {
-        return std::nullopt;
-    }
+        std::uint64_t payload_len = header[1] & 0x7FU;
+        if (payload_len == 126) {
+            unsigned char ext[2];
+            if (!RecvAll(fd, ext, sizeof(ext))) {
+                return std::nullopt;
+            }
+            payload_len = (static_cast<std::uint64_t>(ext[0]) << 8U) | ext[1];
+        } else if (payload_len == 127) {
+            unsigned char ext[8];
+            if (!RecvAll(fd, ext, sizeof(ext))) {
+                return std::nullopt;
+            }
+            payload_len = 0;
+            for (int i = 0; i < 8; ++i) {
+                payload_len = (payload_len << 8U) | ext[i];
+            }
+        }
 
-    unsigned char mask[4];
-    if (!RecvAll(fd, mask, sizeof(mask))) {
-        return std::nullopt;
-    }
+        if (payload_len > kMaxFrameSize) {
+            return std::nullopt;
+        }
 
-    std::string payload(payload_len, '\0');
-    if (!RecvAll(fd, reinterpret_cast<unsigned char*>(&payload[0]), payload_len)) {
-        return std::nullopt;
-    }
+        unsigned char mask[4];
+        if (!RecvAll(fd, mask, sizeof(mask))) {
+            return std::nullopt;
+        }
 
-    for (std::size_t i = 0; i < payload.size(); ++i) {
-        payload[i] = static_cast<char>(payload[i] ^ mask[i % 4]);
+        std::string payload(payload_len, '\0');
+        if (payload_len > 0 &&
+            !RecvAll(fd,
+                     reinterpret_cast<unsigned char*>(payload.data()),
+                     static_cast<std::size_t>(payload_len))) {
+            return std::nullopt;
+        }
+
+        for (std::size_t i = 0; i < payload.size(); ++i) {
+            payload[i] = static_cast<char>(payload[i] ^ mask[i % 4]);
+        }
+
+        if (opcode == 0x1) {
+            return payload;
+        }
+        if (opcode == 0xA) {
+            continue;
+        }
+        if (opcode == 0x9) {
+            std::vector<unsigned char> frame;
+            frame.reserve(payload.size() + 10);
+            frame.push_back(0x8AU);  // FIN + pong opcode
+
+            if (payload.size() < 126) {
+                frame.push_back(static_cast<unsigned char>(payload.size()));
+            } else if (payload.size() <= 0xFFFF) {
+                frame.push_back(126U);
+                frame.push_back(static_cast<unsigned char>((payload.size() >> 8U) & 0xFFU));
+                frame.push_back(static_cast<unsigned char>(payload.size() & 0xFFU));
+            } else {
+                frame.push_back(127U);
+                const std::uint64_t size = payload.size();
+                for (int shift = 56; shift >= 0; shift -= 8) {
+                    frame.push_back(static_cast<unsigned char>((size >> shift) & 0xFFU));
+                }
+            }
+
+            frame.insert(frame.end(), payload.begin(), payload.end());
+            if (!SendAll(fd, frame.data(), frame.size())) {
+                return std::nullopt;
+            }
+            continue;
+        }
+
+        // Ignore unsupported non-text frames and continue reading.
     }
-    return payload;
 }
 
 bool SendTextFrame(int fd, const std::string& payload) {
@@ -465,6 +500,9 @@ void HandleClientSocket(int client_fd, ChatService& chat_service) {
     try {
         chat_service.OnWebSocketOpen(client_id);
     } catch (const std::exception& ex) {
+        logging::Logger::Instance().Warn(
+            "WebSocketServer",
+            std::string("OnWebSocketOpen failed for client_id=") + client_id + ": " + ex.what());
         SendWithLock(client_fd, client_send_mutex, BuildErrorJson(ex.what()));
         g_session_registry.Remove(client_id);
         close(client_fd);

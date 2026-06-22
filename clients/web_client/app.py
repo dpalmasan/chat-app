@@ -19,14 +19,17 @@ app = Flask(__name__)
 
 DB_SERVICE_HOST = os.getenv("DB_SERVICE_HOST", "127.0.0.1")
 DB_SERVICE_PORT = int(os.getenv("DB_SERVICE_PORT", "9091"))
+SERVICE_DISCOVERY_MODE = os.getenv("CHAT_SERVICE_DISCOVERY_MODE", "ingress").strip().lower()
+CHAT_WS_PATH = os.getenv("CHAT_WS_PATH", "/ws")
+CHAT_SERVICE_WS_ENDPOINT = os.getenv("CHAT_SERVICE_WS_ENDPOINT", "").strip()
 
 
 class ServiceDiscoveryLoadBalancer:
-    """Simple in-memory service discovery + load balancer.
+    """Simple in-memory service discovery + load balancer (dev-only).
 
-    This is a lightweight stand-in for a real ZooKeeper-backed registry.
-    It performs sticky assignment per user and chooses the least-loaded
-    instance for new users.
+    This is only intended for local development when running multiple
+    chat_service instances outside Kubernetes/Ingress. In production,
+    use ingress-based routing instead.
     """
 
     def __init__(self, websocket_instances: list[str]) -> None:
@@ -62,7 +65,7 @@ class ServiceDiscoveryLoadBalancer:
 
 
 def _load_websocket_instances() -> list[str]:
-    """Load discoverable websocket instances from environment configuration."""
+    """Load discoverable websocket instances for dev-only load balancing."""
     configured = os.getenv("CHAT_SERVICE_WS_INSTANCES", "")
     if configured.strip():
         return [entry.strip() for entry in configured.split(",") if entry.strip()]
@@ -73,6 +76,36 @@ def _load_websocket_instances() -> list[str]:
 
 
 service_discovery = ServiceDiscoveryLoadBalancer(_load_websocket_instances())
+
+
+def _normalize_ws_path(path: str) -> str:
+    normalized = path.strip() or "/ws"
+    if not normalized.startswith("/"):
+        normalized = f"/{normalized}"
+    return normalized
+
+
+def _resolve_ingress_ws_endpoint() -> str:
+    """Resolve websocket endpoint through ingress/current host.
+
+    Priority:
+    1) Explicit CHAT_SERVICE_WS_ENDPOINT override.
+    2) Request host + ws/wss + CHAT_WS_PATH.
+    """
+    if CHAT_SERVICE_WS_ENDPOINT:
+        return CHAT_SERVICE_WS_ENDPOINT
+
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "")
+    scheme = "wss" if forwarded_proto == "https" or request.scheme == "https" else "ws"
+    host = request.headers.get("X-Forwarded-Host") or request.host
+    return f"{scheme}://{host}{_normalize_ws_path(CHAT_WS_PATH)}"
+
+
+def _resolve_websocket_endpoint(user_id: str) -> tuple[str, str]:
+    """Return websocket endpoint and discovery mode label."""
+    if SERVICE_DISCOVERY_MODE == "dev_lb":
+        return service_discovery.assign(user_id), "dev_lb"
+    return _resolve_ingress_ws_endpoint(), "ingress"
 
 
 def _read_line(sock: socket.socket) -> str:
@@ -158,12 +191,13 @@ def login() -> tuple[dict[str, object], int]:
     try:
         payload = _db_request(f"LOGIN|{quote(user_id, safe='')}")
         user = _parse_user_entry(payload)
-        websocket_endpoint = service_discovery.assign(user_id)
+        websocket_endpoint, discovery_mode = _resolve_websocket_endpoint(user_id)
         return {
             "ok": True,
             "user": user,
             "service_discovery": {
                 "websocket_endpoint": websocket_endpoint,
+                "mode": discovery_mode,
             },
         }, 200
     except Exception as ex:  # noqa: BLE001 - tiny prototype endpoint
@@ -172,13 +206,14 @@ def login() -> tuple[dict[str, object], int]:
 
 @app.post("/api/logout")
 def logout() -> tuple[dict[str, object], int]:
-    """Release load-balancer assignment for a user when logging out."""
+    """Release dev load-balancer assignment for a user when logging out."""
     body = request.get_json(silent=True) or {}
     user_id = str(body.get("user_id", "")).strip()
     if not user_id:
         return {"ok": False, "error": "user_id is required"}, 400
 
-    service_discovery.release(user_id)
+    if SERVICE_DISCOVERY_MODE == "dev_lb":
+        service_discovery.release(user_id)
     return {"ok": True}, 200
 
 
@@ -217,4 +252,8 @@ def history() -> tuple[dict[str, object], int]:
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(
+        host=os.getenv("FLASK_RUN_HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", "5000")),
+        debug=os.getenv("FLASK_DEBUG", "0") == "1",
+    )

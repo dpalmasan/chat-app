@@ -51,9 +51,9 @@ int main(int argc, char* argv[]) {
         "Remote db service at " + db_host + ":" + std::to_string(db_port));
     logging::Logger::Instance().Info(
         "Main",
-        "Starting WebSocket server on 127.0.0.1:" + std::to_string(websocket_port));
+        "Starting WebSocket server on 0.0.0.0:" + std::to_string(websocket_port));
 
-    server.Run("127.0.0.1", websocket_port);
+    server.Run("0.0.0.0", websocket_port);
 
     return 0;
 }

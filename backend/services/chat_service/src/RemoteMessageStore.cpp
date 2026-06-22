@@ -1,6 +1,7 @@
 #include "RemoteMessageStore.h"
 
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -116,21 +117,31 @@ std::vector<MessageStore::UserPresence> RemoteMessageStore::ListUsers() {
 }
 
 std::string RemoteMessageStore::SendRequest(const std::string& request) {
-    const int sock = socket(AF_INET, SOCK_STREAM, 0);
+    const std::string port_text = std::to_string(port_);
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    addrinfo* result = nullptr;
+    if (getaddrinfo(host_.c_str(), port_text.c_str(), &hints, &result) != 0 || result == nullptr) {
+        throw std::runtime_error("failed to resolve remote db service host");
+    }
+
+    int sock = -1;
+    for (addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
+        sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (sock < 0) {
+            continue;
+        }
+        if (connect(sock, rp->ai_addr, rp->ai_addrlen) == 0) {
+            break;
+        }
+        close(sock);
+        sock = -1;
+    }
+    freeaddrinfo(result);
+
     if (sock < 0) {
-        throw std::runtime_error("failed to create remote store socket");
-    }
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port_);
-    if (inet_pton(AF_INET, host_.c_str(), &addr.sin_addr) <= 0) {
-        close(sock);
-        throw std::invalid_argument("invalid remote store host");
-    }
-
-    if (connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        close(sock);
         throw std::runtime_error("failed to connect to remote db service");
     }
 

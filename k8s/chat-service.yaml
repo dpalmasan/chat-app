@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat-service
+  namespace: chat-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chat-service
+  template:
+    metadata:
+      labels:
+        app: chat-service
+    spec:
+      containers:
+      - name: chat-service
+        image: chat-app/chat-service:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: MESSAGE_QUEUE_HOST
+          value: message-queue
+        - name: MESSAGE_QUEUE_PORT
+          value: "9090"
+        - name: DB_SERVICE_HOST
+          value: db-service
+        - name: DB_SERVICE_PORT
+          value: "9091"
+        ports:
+        - containerPort: 8080
+        args: ["8080"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-service
+  namespace: chat-app
+spec:
+  selector:
+    app: chat-service
+  ports:
+  - name: ws
+    port: 8080
+    targetPort: 8080

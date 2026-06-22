@@ -36,6 +36,10 @@ We need to add to the data store a user object, which has the user id, the statu
 
 Now we start getting to a production-ish stage. We implement a Data Store based on MongoDB. This is persistent, so even if we close the chat service/DB service, message queue and restart, we should be able to see the messages. It is already populated with the users for the presence server.
 
+#### Step 5
+
+Now is time to scale, let's use kubernetes and nginx ingress, for local development we can just use minikube. Now, we need to glue the clients to this ingress entry point.
+
 
 ## Clients
 

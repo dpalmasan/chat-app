@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: message-queue
+  namespace: chat-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: message-queue
+  template:
+    metadata:
+      labels:
+        app: message-queue
+    spec:
+      containers:
+      - name: message-queue
+        image: chat-app/message-queue:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: DB_SERVICE_HOST
+          value: db-service
+        - name: DB_SERVICE_PORT
+          value: "9091"
+        ports:
+        - containerPort: 9090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: message-queue
+  namespace: chat-app
+spec:
+  selector:
+    app: message-queue
+  ports:
+  - name: tcp
+    port: 9090
+    targetPort: 9090

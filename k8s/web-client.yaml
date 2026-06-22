@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-client
+  namespace: chat-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-client
+  template:
+    metadata:
+      labels:
+        app: web-client
+    spec:
+      containers:
+      - name: web-client
+        image: chat-app/web-client:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: DB_SERVICE_HOST
+          value: db-service
+        - name: DB_SERVICE_PORT
+          value: "9091"
+        - name: CHAT_SERVICE_WS_INSTANCES
+          value: ws://chat.local/ws
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-client
+  namespace: chat-app
+spec:
+  selector:
+    app: web-client
+  ports:
+  - name: http
+    port: 5000
+    targetPort: 5000

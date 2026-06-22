@@ -261,7 +261,7 @@
           <p class="hint">Login with an existing user and choose your endpoints.</p>
           <form id="login_form" class="login-form">
             <input id="login_user_id" placeholder="User ID (user_a..user_e)" value="user_a" />
-            <input id="chat_service_base" placeholder="Load Balancer URL" value="http://127.0.0.1:5000" />
+            <input id="chat_service_base" placeholder="Load Balancer URL" value="" />
             <button id="login_btn" type="submit">Log In</button>
             <div class="status" id="login_status"></div>
           </form>
@@ -331,6 +331,7 @@
       const serverLabelEl = document.getElementById("server_label");
       const msgTpl = document.getElementById("message_tpl");
       const contentEl = document.getElementById("content");
+      const chatServiceBaseEl = document.getElementById("chat_service_base");
 
       let socket = null;
       let currentUser = "";
@@ -338,6 +339,9 @@
       let apiBase = window.location.origin;
       let assignedWsEndpoint = "";
       let usersPollTimer = null;
+      let reconnectTimer = null;
+      let shouldReconnect = false;
+      let socketGeneration = 0;
       const conversations = new Map();
 
       function partnerFor(msg) {
@@ -373,6 +377,16 @@
 
       function normalizeBase(url) {
         return (url || "").trim().replace(/\/$/, "");
+      }
+
+      function initializeApiBaseInput() {
+        if (!chatServiceBaseEl) {
+          return;
+        }
+        const current = normalizeBase(chatServiceBaseEl.value);
+        if (!current || current === "http://127.0.0.1:5000") {
+          chatServiceBaseEl.value = window.location.origin;
+        }
       }
 
       async function apiRequest(path, options) {
@@ -533,28 +547,57 @@
           return;
         }
 
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+
         if (socket && socket.readyState === WebSocket.OPEN) {
-          socket.close();
+          return;
+        }
+        if (socket && socket.readyState === WebSocket.CONNECTING) {
+          return;
         }
 
         setStatus("Connecting websocket...");
         const connector = wsBase.includes("?") ? "&" : "?";
+        socketGeneration += 1;
+        const generation = socketGeneration;
         socket = new WebSocket(`${wsBase}${connector}client_id=${encodeURIComponent(currentUser)}`);
+        const currentSocket = socket;
 
-        socket.onopen = () => {
+        currentSocket.onopen = () => {
+          if (socket !== currentSocket || generation !== socketGeneration) {
+            return;
+          }
           setStatus(`Connected as ${currentUser}`);
           refreshUsers().catch(() => {});
         };
 
-        socket.onclose = () => {
+        currentSocket.onclose = () => {
+          if (socket !== currentSocket || generation !== socketGeneration) {
+            return;
+          }
           setStatus("Disconnected");
+          if (shouldReconnect && currentUser && assignedWsEndpoint) {
+            setStatus("Disconnected. Reconnecting...");
+            reconnectTimer = setTimeout(() => {
+              connectWebSocket();
+            }, 1000);
+          }
         };
 
-        socket.onerror = () => {
+        currentSocket.onerror = () => {
+          if (socket !== currentSocket || generation !== socketGeneration) {
+            return;
+          }
           setStatus("Socket error");
         };
 
-        socket.onmessage = (event) => {
+        currentSocket.onmessage = (event) => {
+          if (socket !== currentSocket || generation !== socketGeneration) {
+            return;
+          }
           try {
             const payload = JSON.parse(event.data);
             if (payload.type === "error") {
@@ -572,8 +615,22 @@
       }
 
       function sendCurrentMessage() {
-        if (!socket || socket.readyState !== WebSocket.OPEN) {
+        if (!socket) {
+          if (currentUser && assignedWsEndpoint) {
+            setStatus("No websocket session. Reconnecting...");
+            connectWebSocket();
+            return;
+          }
           setStatus("Connect first");
+          return;
+        }
+        if (socket.readyState === WebSocket.CONNECTING) {
+          setStatus("Still connecting websocket...");
+          return;
+        }
+        if (socket.readyState !== WebSocket.OPEN) {
+          setStatus("Disconnected. Reconnecting...");
+          connectWebSocket();
           return;
         }
         if (!selectedUser) {
@@ -626,7 +683,7 @@
       loginFormEl.addEventListener("submit", async (event) => {
         event.preventDefault();
         const userId = document.getElementById("login_user_id").value.trim();
-        apiBase = normalizeBase(document.getElementById("chat_service_base").value) || window.location.origin;
+        apiBase = normalizeBase(chatServiceBaseEl.value) || window.location.origin;
 
         if (!userId) {
           setLoginStatus("user_id is required");
@@ -647,6 +704,7 @@
 
           currentUser = result.user.user_id;
           assignedWsEndpoint = result.service_discovery.websocket_endpoint;
+          shouldReconnect = true;
           welcomeTitleEl.textContent = `Chat App - ${currentUser}`;
           serverLabelEl.textContent = `Server: ${assignedWsEndpoint}`;
           setLoginStatus("");
@@ -679,10 +737,16 @@
       });
 
       logoutBtn.addEventListener("click", async () => {
+        shouldReconnect = false;
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
         stopUsersPolling();
         if (socket) {
           socket.close();
           socket = null;
+          socketGeneration += 1;
         }
 
         if (currentUser) {
@@ -701,6 +765,7 @@
         showLoginScreen();
       });
 
+      initializeApiBaseInput();
       showLoginScreen();
     </script>
   </body>
