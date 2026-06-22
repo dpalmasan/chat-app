@@ -70,3 +70,87 @@ kubectl get ingress -n chat-app
 kubectl logs -n chat-app deploy/web-client
 kubectl logs -n chat-app deploy/chat-service
 ```
+
+## Load test with pod/db charts
+
+This repo includes a scripted load test that:
+
+- generates websocket traffic through ingress (`ws://chat.local/ws`)
+- samples which `chat-service` pod handled handshakes over time
+- samples MongoDB document growth (`messages` and `users`)
+- renders PNG charts
+
+### Prerequisites
+
+- Kubernetes stack is running (`./scripts/start_k8s_services.sh`)
+- Python packages:
+
+```bash
+pip install websockets matplotlib
+```
+
+### Run
+
+```bash
+./scripts/run_load_test_with_charts.sh
+```
+
+Optional tuning:
+
+```bash
+CLIENTS=50 DURATION_SECONDS=180 SAMPLE_SECONDS=2 ./scripts/run_load_test_with_charts.sh
+```
+
+Generate animations (GIF by default):
+
+```bash
+ANIMATE=1 ./scripts/run_load_test_with_charts.sh
+```
+
+Customize format/fps:
+
+```bash
+ANIMATE=1 ANIMATION_FORMAT=gif ANIMATION_FPS=6 ./scripts/run_load_test_with_charts.sh
+```
+
+`ANIMATION_FORMAT=mp4` is also supported when `ffmpeg` is available in PATH.
+
+Pod-touch sampling source:
+
+- Default is ingress logs (`POD_TOUCH_SOURCE=ingress`) to measure real load-balancer routing.
+- Optional fallback: `POD_TOUCH_SOURCE=chat_service_logs`.
+
+Output is written under `artifacts/load_test_<timestamp>/`:
+
+- `load_summary.json`
+- `pod_touch_samples.csv`
+- `db_population_samples.csv`
+- `pod_touch_chart.png`
+- `db_population_chart.png`
+- `pod_touch_evolution.gif|mp4` (optional)
+- `db_population_evolution.gif|mp4` (optional)
+
+## Compare multiple balancing strategies
+
+Run one load-test pass per strategy and create comparison charts:
+
+```bash
+./scripts/run_lb_strategy_comparison.sh
+```
+
+Default strategies:
+
+- `round_robin`
+- `hash_client_id` (sticky by websocket query arg `client_id`)
+- `ewma`
+
+Example with custom duration/concurrency:
+
+```bash
+CLIENTS=30 DURATION_SECONDS=90 ./scripts/run_lb_strategy_comparison.sh
+```
+
+Comparison artifacts are written to `artifacts/lb_strategy_<timestamp>/` and include:
+
+- `strategy_pod_touch_comparison.png`
+- `strategy_db_growth_comparison.png`

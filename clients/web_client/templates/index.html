@@ -343,6 +343,14 @@
       let shouldReconnect = false;
       let socketGeneration = 0;
       const conversations = new Map();
+      const seenMessageIds = new Set();
+
+      function messageIdKey(msg) {
+        if (!msg || msg.message_id === undefined || msg.message_id === null) {
+          return null;
+        }
+        return String(msg.message_id);
+      }
 
       function partnerFor(msg) {
         return msg.message_from === currentUser ? msg.message_to : msg.message_from;
@@ -505,9 +513,17 @@
       }
 
       function addMessage(msg) {
+        const messageId = messageIdKey(msg);
+        if (messageId && seenMessageIds.has(messageId)) {
+          return;
+        }
+
         const partner = partnerFor(msg);
         if (!conversations.has(partner)) {
           conversations.set(partner, []);
+        }
+        if (messageId) {
+          seenMessageIds.add(messageId);
         }
         conversations.get(partner).push(msg);
         if (partner === selectedUser) {
@@ -517,10 +533,19 @@
 
       function hydrateHistory(messages) {
         conversations.clear();
+        seenMessageIds.clear();
         for (const message of messages) {
+          const messageId = messageIdKey(message);
+          if (messageId && seenMessageIds.has(messageId)) {
+            continue;
+          }
+
           const partner = message.message_from === currentUser ? message.message_to : message.message_from;
           if (!conversations.has(partner)) {
             conversations.set(partner, []);
+          }
+          if (messageId) {
+            seenMessageIds.add(messageId);
           }
           conversations.get(partner).push(message);
         }
@@ -761,6 +786,7 @@
         assignedWsEndpoint = "";
         serverLabelEl.textContent = "Server: n/a";
         conversations.clear();
+        seenMessageIds.clear();
         setStatus("Disconnected");
         showLoginScreen();
       });
