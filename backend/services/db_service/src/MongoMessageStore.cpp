@@ -90,32 +90,30 @@ MongoMessageStore::MongoMessageStore(std::string mongo_uri, std::string database
       database_name_(std::move(database_name)) {
     mongoc_init();
 
-    client_ = mongoc_client_new(mongo_uri_.c_str());
+    client_.reset(mongoc_client_new(mongo_uri_.c_str()));
     if (client_ == nullptr) {
         mongoc_cleanup();
         throw std::runtime_error("failed to create MongoDB client");
     }
 
-    database_ = mongoc_client_get_database(client_, database_name_.c_str());
-    messages_collection_ = mongoc_client_get_collection(client_, database_name_.c_str(), "messages");
-    users_collection_ = mongoc_client_get_collection(client_, database_name_.c_str(), "users");
+    database_.reset(mongoc_client_get_database(client_.get(), database_name_.c_str()));
+    messages_collection_.reset(
+        mongoc_client_get_collection(client_.get(), database_name_.c_str(), "messages"));
+    users_collection_.reset(
+        mongoc_client_get_collection(client_.get(), database_name_.c_str(), "users"));
+
+    if (database_ == nullptr || messages_collection_ == nullptr || users_collection_ == nullptr) {
+        throw std::runtime_error("failed to open MongoDB database or collections");
+    }
 
     SeedUsersIfNeeded();
 }
 
 MongoMessageStore::~MongoMessageStore() {
-    if (messages_collection_ != nullptr) {
-        mongoc_collection_destroy(messages_collection_);
-    }
-    if (users_collection_ != nullptr) {
-        mongoc_collection_destroy(users_collection_);
-    }
-    if (database_ != nullptr) {
-        mongoc_database_destroy(database_);
-    }
-    if (client_ != nullptr) {
-        mongoc_client_destroy(client_);
-    }
+    users_collection_.reset();
+    messages_collection_.reset();
+    database_.reset();
+    client_.reset();
     mongoc_cleanup();
 }
 
@@ -146,7 +144,8 @@ ChatMessage MongoMessageStore::SaveMessage(ChatMessage message) {
         "delivered_to", "[", "]");
 
     bson_error_t error;
-    const bool inserted = mongoc_collection_insert_one(messages_collection_, message_doc, nullptr, nullptr, &error);
+    const bool inserted =
+        mongoc_collection_insert_one(messages_collection_.get(), message_doc, nullptr, nullptr, &error);
     bson_destroy(message_doc);
     ThrowOnMongoError(inserted, error, "insert message");
 
@@ -155,7 +154,8 @@ ChatMessage MongoMessageStore::SaveMessage(ChatMessage message) {
         "$set", "{",
             "last_active_at_ms", BCON_INT64(created_at_ms),
         "}");
-    const bool updated = mongoc_collection_update_one(users_collection_, user_filter, user_update, nullptr, nullptr, &error);
+    const bool updated =
+        mongoc_collection_update_one(users_collection_.get(), user_filter, user_update, nullptr, nullptr, &error);
     bson_destroy(user_filter);
     bson_destroy(user_update);
     ThrowOnMongoError(updated, error, "update sender last_active_at");
@@ -171,7 +171,8 @@ std::vector<ChatMessage> MongoMessageStore::LoadPendingMessagesFor(const UserId&
         "delivered_to", "{", "$ne", BCON_UTF8(recipient_id.c_str()), "}");
     bson_t* opts = BCON_NEW("sort", "{", "message_id", BCON_INT32(1), "}");
 
-    mongoc_cursor_t* cursor = mongoc_collection_find_with_opts(messages_collection_, filter, opts, nullptr);
+    mongoc_cursor_t* cursor =
+        mongoc_collection_find_with_opts(messages_collection_.get(), filter, opts, nullptr);
     bson_destroy(filter);
     bson_destroy(opts);
 
@@ -201,7 +202,8 @@ std::vector<ChatMessage> MongoMessageStore::LoadHistoryFor(const UserId& user_id
         "]");
     bson_t* opts = BCON_NEW("sort", "{", "message_id", BCON_INT32(1), "}");
 
-    mongoc_cursor_t* cursor = mongoc_collection_find_with_opts(messages_collection_, filter, opts, nullptr);
+    mongoc_cursor_t* cursor =
+        mongoc_collection_find_with_opts(messages_collection_.get(), filter, opts, nullptr);
     bson_destroy(filter);
     bson_destroy(opts);
 
@@ -233,7 +235,8 @@ void MongoMessageStore::MarkMessageDelivered(const UserId& recipient_id, Message
         "}");
 
     bson_error_t error;
-    const bool updated = mongoc_collection_update_one(messages_collection_, filter, update, nullptr, nullptr, &error);
+    const bool updated =
+        mongoc_collection_update_one(messages_collection_.get(), filter, update, nullptr, nullptr, &error);
     bson_destroy(filter);
     bson_destroy(update);
     ThrowOnMongoError(updated, error, "mark delivered");
@@ -253,7 +256,8 @@ MessageStore::UserPresence MongoMessageStore::LoginUser(const UserId& user_id) {
         "}");
 
     bson_error_t error;
-    const bool updated = mongoc_collection_update_one(users_collection_, filter, update, nullptr, nullptr, &error);
+    const bool updated =
+        mongoc_collection_update_one(users_collection_.get(), filter, update, nullptr, nullptr, &error);
     bson_destroy(filter);
     bson_destroy(update);
     ThrowOnMongoError(updated, error, "login update user last_active_at");
@@ -270,7 +274,7 @@ bool MongoMessageStore::UserExistsUnlocked(const UserId& user_id) {
     bson_t* filter = BCON_NEW("user_id", BCON_UTF8(user_id.c_str()));
     bson_error_t error;
     const std::int64_t count = mongoc_collection_count_documents(
-        users_collection_, filter, nullptr, nullptr, nullptr, &error);
+        users_collection_.get(), filter, nullptr, nullptr, nullptr, &error);
     bson_destroy(filter);
 
     if (count < 0) {
@@ -288,7 +292,7 @@ void MongoMessageStore::SetPresence(const UserId& user_id, bool is_online) {
     {
         bson_t* count_filter = BCON_NEW("user_id", BCON_UTF8(user_id.c_str()));
         mongoc_cursor_t* count_cursor =
-            mongoc_collection_find_with_opts(users_collection_, count_filter, nullptr, nullptr);
+            mongoc_collection_find_with_opts(users_collection_.get(), count_filter, nullptr, nullptr);
         bson_destroy(count_filter);
 
         const bson_t* count_doc = nullptr;
@@ -319,7 +323,8 @@ void MongoMessageStore::SetPresence(const UserId& user_id, bool is_online) {
         "}");
 
     bson_error_t error;
-    const bool updated = mongoc_collection_update_one(users_collection_, filter, update, nullptr, nullptr, &error);
+    const bool updated =
+        mongoc_collection_update_one(users_collection_.get(), filter, update, nullptr, nullptr, &error);
     bson_destroy(filter);
     bson_destroy(update);
     ThrowOnMongoError(updated, error, "set presence");
@@ -331,7 +336,8 @@ std::vector<MessageStore::UserPresence> MongoMessageStore::ListUsers() {
     bson_t* filter = bson_new();
     bson_t* opts = BCON_NEW("sort", "{", "user_id", BCON_INT32(1), "}");
 
-    mongoc_cursor_t* cursor = mongoc_collection_find_with_opts(users_collection_, filter, opts, nullptr);
+    mongoc_cursor_t* cursor =
+        mongoc_collection_find_with_opts(users_collection_.get(), filter, opts, nullptr);
     bson_destroy(filter);
     bson_destroy(opts);
 
@@ -357,7 +363,7 @@ void MongoMessageStore::SeedUsersIfNeeded() {
     bson_t* filter = bson_new();
     bson_error_t error;
     const std::int64_t count = mongoc_collection_count_documents(
-        users_collection_, filter, nullptr, nullptr, nullptr, &error);
+        users_collection_.get(), filter, nullptr, nullptr, nullptr, &error);
     bson_destroy(filter);
 
     if (count < 0) {
@@ -374,7 +380,8 @@ void MongoMessageStore::SeedUsersIfNeeded() {
             "is_online", BCON_BOOL(false),
             "active_connections", BCON_INT64(0),
             "last_active_at_ms", BCON_INT64(now_ms));
-        const bool inserted = mongoc_collection_insert_one(users_collection_, doc, nullptr, nullptr, &error);
+        const bool inserted =
+            mongoc_collection_insert_one(users_collection_.get(), doc, nullptr, nullptr, &error);
         bson_destroy(doc);
         ThrowOnMongoError(inserted, error, "seed user");
     }
@@ -388,7 +395,8 @@ MessageId MongoMessageStore::NextMessageId() {
         "sort", "{", "message_id", BCON_INT32(-1), "}",
         "limit", BCON_INT32(1));
 
-    mongoc_cursor_t* cursor = mongoc_collection_find_with_opts(messages_collection_, filter, opts, nullptr);
+    mongoc_cursor_t* cursor =
+        mongoc_collection_find_with_opts(messages_collection_.get(), filter, opts, nullptr);
     bson_destroy(filter);
     bson_destroy(opts);
 
@@ -413,7 +421,8 @@ MessageStore::UserPresence MongoMessageStore::LoadUserOrThrow(const UserId& user
     StoreLock lock(store_mutex_);
 
     bson_t* filter = BCON_NEW("user_id", BCON_UTF8(user_id.c_str()));
-    mongoc_cursor_t* cursor = mongoc_collection_find_with_opts(users_collection_, filter, nullptr, nullptr);
+    mongoc_cursor_t* cursor =
+        mongoc_collection_find_with_opts(users_collection_.get(), filter, nullptr, nullptr);
     bson_destroy(filter);
 
     const bson_t* doc = nullptr;
